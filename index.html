@@ -1331,7 +1331,7 @@ function iniciarRealtimePedidos(){
   if(!SUPABASE_CONFIGURADO) return;
   supabaseClient
     .channel('app_storage_pedidos')
-    .on('postgres_changes', { event:'*', schema:'public', table:'app_storage', filter:'key=eq.pedidos' }, (payload) => {
+    .on('postgres_changes', { event:'*', schema:'public', table:'pedidos', filter:'key=eq.pedidos' }, (payload) => {
       // Si el cambio lo hicimos nosotros mismos hace menos de 8 segundos, no nos auto-notificamos.
       if(Date.now() - ultimoGuardadoPropio < 8000) return;
       try{
