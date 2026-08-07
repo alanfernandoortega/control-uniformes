@@ -1327,30 +1327,32 @@ async function notificarLocal(titulo, cuerpo){
 }
 
 /* ---------- Supabase Realtime: notificar cuando OTRO usuario agrega/modifica un pedido ---------- */
-function iniciarRealtimePedidos(){
-  if(!SUPABASE_CONFIGURADO) return;
+function iniciarRealtimePedidos() {
+  if (!SUPABASE_CONFIGURADO) return;
   supabaseClient
     .channel('app_storage_pedidos')
-    .on('postgres_changes', { event:'*', schema:'public', table:'pedidos', filter:'key=eq.pedidos' }, (payload) => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos', filter: 'key=eq.pedidos' }, (payload) => {
       // Si el cambio lo hicimos nosotros mismos hace menos de 8 segundos, no nos auto-notificamos.
-      if(Date.now() - ultimoGuardadoPropio < 8000) return;
-      try{
+      if (Date.now() - ultimoGuardadoPropio < 8000) return;
+      try {
         const nuevos = JSON.parse(payload.new.value || '[]');
         const anteriores = pedidos;
         const idsAnteriores = new Set(anteriores.map(p => String(p.id)));
         const nuevoPedido = nuevos.find(p => !idsAnteriores.has(String(p.id)));
-        if(nuevoPedido){
-          notificarLocal('Pedido nuevo', `${nuevoPedido.cliente} — ${ESTATUS_LABELS[nuevoPedido.estatusProduccion]||''}`);
+        if (nuevoPedido) {
+          notificarLocal('Pedido nuevo', `${nuevoPedido.cliente} — ${ESTATUS_LABELS[nuevoPedido.estatusProduccion] || ''}`);
         } else {
           const modificado = nuevos.find(np => {
-            const anterior = anteriores.find(ap => String(ap.id)===String(np.id));
+            const anterior = anteriores.find(ap => String(ap.id) === String(np.id));
             return anterior && JSON.stringify(anterior) !== JSON.stringify(np);
           });
-          if(modificado) notificarLocal('Pedido modificado', `${modificado.cliente} — ${ESTATUS_LABELS[modificado.estatusProduccion]||''}`);
+          if (modificado) notificarLocal('Pedido modificado', `${modificado.cliente} — ${ESTATUS_LABELS[modificado.estatusProduccion] || ''}`);
         }
         pedidos = nuevos;
         renderAll();
-      }catch(e){ console.error(e); }
+      } catch (e) {
+        console.error(e);
+      }
     })
     .subscribe();
 }
