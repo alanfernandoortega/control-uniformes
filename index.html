@@ -1329,8 +1329,8 @@ async function notificarLocal(titulo, cuerpo){
 /* ---------- Supabase Realtime: notificar cuando OTRO usuario agrega/modifica un pedido ---------- */
 function iniciarRealtimePedidos() {
   if (!SUPABASE_CONFIGURADO) return;
-  
-  // Limpiamos o nos aseguramos de no reutilizar un canal ya suscrito
+
+  // Remueve cualquier suscripción previa al canal para evitar duplicados
   supabaseClient.removeChannel(supabaseClient.channel('app_storage_pedidos'));
 
   supabaseClient
@@ -1358,7 +1358,7 @@ function iniciarRealtimePedidos() {
         console.error(e);
       }
     })
-    .subscribe(); // .subscribe() siempre al final
+    .subscribe(); // .subscribe() va estrictamente al final
 }
 /* ---------- Revisión periódica de alertas por tiempo (mientras la app esté abierta) ---------- */
 function revisarAlertasYNotificar(){
