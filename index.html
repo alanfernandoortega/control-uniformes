@@ -2391,52 +2391,84 @@ initAuth();
 </body>
 </html>
 <script>
-  // --- REGISTRO AUTOMÁTICO DE SESIONES CON SUPABASE ---
+  // --- REGISTRO DE SESIONES ROBUSTO ---
   let sesionId = null;
   const tiempoInicio = Date.now();
 
   async function registrarEntrada() {
-    if (typeof supabase !== 'undefined' && supabase.from) {
-      // Obtenemos el usuario autenticado (Google u otro) desde Supabase
-      const { data: { user } } = await supabase.auth.getUser();
+    try {
+      let usuarioNombre = 'Anónimo';
 
-      let nombreUsuario = 'Anónimo';
-      if (user) {
-        nombreUsuario = user.user_metadata?.full_name || user.email || user.id;
+      // 1. Intentamos obtener el usuario autenticado desde Supabase
+      if (typeof _supabase !== 'undefined') {
+        const { data } = await _supabase.auth.getSession();
+        if (data?.session?.user) {
+          usuarioNombre = data.session.user.email || data.session.user.user_metadata?.full_name || 'Usuario Google';
+        }
+      } else if (typeof supabase !== 'undefined' && supabase.auth) {
+        const { data } = await supabase.auth.getSession();
+        if (data?.session?.user) {
+          usuarioNombre = data.session.user.email || data.session.user.user_metadata?.full_name || 'Usuario Google';
+        }
       }
 
-      const { data, error } = await supabase
-        .from('sesiones_uso')
-        .insert([
-          { usuario: nombreUsuario, inicio_sesion: new Date().toISOString() }
-        ])
-        .select();
-
-      if (data && data.length > 0) {
-        sesionId = data[0].id;
+      // 2. Si no lo encuentra en el cliente, toma el correo que ya está cargado en pantalla
+      const userDisplay = document.querySelector('.user-email') || document.querySelector('#user-info');
+      if (usuarioNombre === 'Anónimo' && userDisplay && userDisplay.textContent) {
+        usuarioNombre = userDisplay.textContent.trim();
       }
+
+      // Cliente a utilizar
+      const client = (typeof _supabase !== 'undefined') ? _supabase : ((typeof supabase !== 'undefined') ? supabase : null);
+
+      if (client) {
+        const { data, error } = await client
+          .from('sesiones_uso')
+          .insert([
+            { usuario: usuarioNombre, inicio_sesion: new Date().toISOString() }
+          ])
+          .select();
+
+        if (error) console.error("Error Supabase Insert:", error);
+
+        if (data && data.length > 0) {
+          sesionId = data[0].id;
+          console.log("Sesión iniciada con ID:", sesionId);
+        }
+      }
+    } catch (e) {
+      console.error("Error al registrar entrada:", e);
     }
   }
 
   async function registrarSalida() {
     if (!sesionId) return;
 
-    const tiempoFin = Date.now();
-    const duracionSegundos = Math.round((tiempoFin - tiempoInicio) / 1000);
+    try {
+      const client = (typeof _supabase !== 'undefined') ? _supabase : ((typeof supabase !== 'undefined') ? supabase : null);
+      const tiempoFin = Date.now();
+      const duracionSegundos = Math.round((tiempoFin - tiempoInicio) / 1000);
 
-    await supabase
-      .from('sesiones_uso')
-      .update({ 
-        fin_sesion: new Date().toISOString(),
-        duracion_segundos: duracionSegundos 
-      })
-      .eq('id', sesionId);
+      if (client) {
+        await client
+          .from('sesiones_uso')
+          .update({ 
+            fin_sesion: new Date().toISOString(),
+            duracion_segundos: duracionSegundos 
+          })
+          .eq('id', sesionId);
+      }
+    } catch (e) {
+      console.error("Error al registrar salida:", e);
+    }
   }
 
-  // Iniciar registro de entrada
-  registrarEntrada();
+  // Esperar 1.5 segundos a que la app inicie sesión de Google
+  window.addEventListener('load', () => {
+    setTimeout(registrarEntrada, 1500);
+  });
 
-  // Registrar salida al cerrar la pestaña o cambiar de app
+  // Registrar salida cuando cierran o cambian de pestaña
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       registrarSalida();
