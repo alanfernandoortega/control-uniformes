@@ -2391,53 +2391,48 @@ initAuth();
 </body>
 </html>
 <script>
-  // --- REGISTRO DE SESIONES ROBUSTO ---
+  // --- REGISTRO DE SESIONES (USANDO CLIENTE DE LA APP) ---
   let sesionId = null;
   const tiempoInicio = Date.now();
 
   async function registrarEntrada() {
     try {
+      // Usamos el cliente oficial que inicializó la app
+      const client = (typeof supabaseClient !== 'undefined') ? supabaseClient : ((typeof supabase !== 'undefined') ? supabase : null);
+
+      if (!client) {
+        console.error("No se encontró el cliente de Supabase");
+        return;
+      }
+
       let usuarioNombre = 'Anónimo';
 
-      // 1. Intentamos obtener el usuario autenticado desde Supabase
-      if (typeof _supabase !== 'undefined') {
-        const { data } = await _supabase.auth.getSession();
-        if (data?.session?.user) {
-          usuarioNombre = data.session.user.email || data.session.user.user_metadata?.full_name || 'Usuario Google';
-        }
-      } else if (typeof supabase !== 'undefined' && supabase.auth) {
-        const { data } = await supabase.auth.getSession();
-        if (data?.session?.user) {
-          usuarioNombre = data.session.user.email || data.session.user.user_metadata?.full_name || 'Usuario Google';
-        }
+      // 1. Obtener la sesión activa
+      const { data: sessionData } = await client.auth.getSession();
+      if (sessionData?.session?.user) {
+        usuarioNombre = sessionData.session.user.email || sessionData.session.user.user_metadata?.full_name || 'Usuario Google';
+      } else {
+        // 2. Si aún no carga la sesión, intentar leer el correo guardado en localStorage o pantalla
+        const emailGuardado = localStorage.getItem('user_email');
+        if (emailGuardado) usuarioNombre = emailGuardado;
       }
 
-      // 2. Si no lo encuentra en el cliente, toma el correo que ya está cargado en pantalla
-      const userDisplay = document.querySelector('.user-email') || document.querySelector('#user-info');
-      if (usuarioNombre === 'Anónimo' && userDisplay && userDisplay.textContent) {
-        usuarioNombre = userDisplay.textContent.trim();
-      }
+      // Guardar en la base de datos
+      const { data, error } = await client
+        .from('sesiones_uso')
+        .insert([
+          { usuario: usuarioNombre, inicio_sesion: new Date().toISOString() }
+        ])
+        .select();
 
-      // Cliente a utilizar
-      const client = (typeof _supabase !== 'undefined') ? _supabase : ((typeof supabase !== 'undefined') ? supabase : null);
-
-      if (client) {
-        const { data, error } = await client
-          .from('sesiones_uso')
-          .insert([
-            { usuario: usuarioNombre, inicio_sesion: new Date().toISOString() }
-          ])
-          .select();
-
-        if (error) console.error("Error Supabase Insert:", error);
-
-        if (data && data.length > 0) {
-          sesionId = data[0].id;
-          console.log("Sesión iniciada con ID:", sesionId);
-        }
+      if (error) {
+        console.error("Error al insertar en sesiones_uso:", error);
+      } else if (data && data.length > 0) {
+        sesionId = data[0].id;
+        console.log("Sesión iniciada con éxito. ID:", sesionId);
       }
     } catch (e) {
-      console.error("Error al registrar entrada:", e);
+      console.error("Error en registrarEntrada:", e);
     }
   }
 
@@ -2445,7 +2440,7 @@ initAuth();
     if (!sesionId) return;
 
     try {
-      const client = (typeof _supabase !== 'undefined') ? _supabase : ((typeof supabase !== 'undefined') ? supabase : null);
+      const client = (typeof supabaseClient !== 'undefined') ? supabaseClient : ((typeof supabase !== 'undefined') ? supabase : null);
       const tiempoFin = Date.now();
       const duracionSegundos = Math.round((tiempoFin - tiempoInicio) / 1000);
 
@@ -2459,16 +2454,16 @@ initAuth();
           .eq('id', sesionId);
       }
     } catch (e) {
-      console.error("Error al registrar salida:", e);
+      console.error("Error en registrarSalida:", e);
     }
   }
 
-  // Esperar 1.5 segundos a que la app inicie sesión de Google
+  // Esperar 2 segundos a que initAuth() inicialice supabaseClient
   window.addEventListener('load', () => {
-    setTimeout(registrarEntrada, 1500);
+    setTimeout(registrarEntrada, 2000);
   });
 
-  // Registrar salida cuando cierran o cambian de pestaña
+  // Registrar salida al ocultar/cerrar la pestaña
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       registrarSalida();
