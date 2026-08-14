@@ -2391,29 +2391,24 @@ initAuth();
 </body>
 </html>
 <script>
-  // 1. Identificar al usuario (lo pide 1 sola vez y se guarda)
-  let usuarioActual = localStorage.getItem('nombre_usuario');
-
-  if (!usuarioActual) {
-    usuarioActual = prompt("Por favor ingresa tu nombre (ej. Alan, Carlos, Maria):");
-    if (usuarioActual) {
-      localStorage.setItem('nombre_usuario', usuarioActual);
-    } else {
-      usuarioActual = "Anónimo";
-    }
-  }
-
+  // --- REGISTRO AUTOMÁTICO DE SESIONES CON SUPABASE ---
   let sesionId = null;
   const tiempoInicio = Date.now();
 
-  // 2. Registrar el INGRESO en Supabase
   async function registrarEntrada() {
-    // Asegúrate de que la variable 'supabase' ya esté inicializada en tu proyecto
     if (typeof supabase !== 'undefined' && supabase.from) {
+      // Obtenemos el usuario autenticado (Google u otro) desde Supabase
+      const { data: { user } } = await supabase.auth.getUser();
+
+      let nombreUsuario = 'Anónimo';
+      if (user) {
+        nombreUsuario = user.user_metadata?.full_name || user.email || user.id;
+      }
+
       const { data, error } = await supabase
         .from('sesiones_uso')
         .insert([
-          { usuario: usuarioActual, inicio_sesion: new Date().toISOString() }
+          { usuario: nombreUsuario, inicio_sesion: new Date().toISOString() }
         ])
         .select();
 
@@ -2423,7 +2418,6 @@ initAuth();
     }
   }
 
-  // 3. Registrar la SALIDA al cerrar o salir de la app
   async function registrarSalida() {
     if (!sesionId) return;
 
@@ -2439,10 +2433,10 @@ initAuth();
       .eq('id', sesionId);
   }
 
-  // Ejecutar ingreso
+  // Iniciar registro de entrada
   registrarEntrada();
 
-  // Escuchar cuando cierran la pestaña o cambian de app
+  // Registrar salida al cerrar la pestaña o cambiar de app
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       registrarSalida();
