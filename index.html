@@ -253,6 +253,7 @@
         <option value="otro">Otro</option>
       </select>
       <input type="text" id="searchPedido" placeholder="Buscar cliente...">
+      <label style="display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;"><input type="checkbox" id="chkTerminados"> Mostrar terminados <span id="lblTerminadosOcultos" style="color:var(--ink-soft);font-size:12px;"></span></label>
     </div>
     <div class="kanban" id="kanban"></div>
   </section>
@@ -429,11 +430,12 @@
 
     <h4>Piezas (talla, nombre, número y tipo de prenda)</h4>
     <table class="mini-table">
-      <thead><tr><th style="width:20%;">Talla</th><th>Nombre</th><th style="width:15%;">Número</th><th style="width:25%;">Tipo de prenda</th><th style="width:6%;"></th></tr></thead>
+      <thead><tr><th style="width:18%;">Alumno / datos completos</th><th style="width:9%;">Talla</th><th>Nombre en uniforme</th><th style="width:8%;">Número</th><th style="width:17%;">Tipo de prenda</th><th style="width:14%;">Observaciones</th><th style="width:5%;"></th></tr></thead>
       <tbody id="piezasBody"></tbody>
     </table>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <button type="button" class="add-row-btn" id="addPiezaRow">+ Agregar pieza</button>
+      <button type="button" class="add-row-btn" id="btnImportarLista">📥 Importar lista (Excel / pegar)</button>
       <button type="button" class="add-row-btn" id="btnAbrirMasivo">+ Agregar varias (sin nombre/número)</button>
     </div>
 
@@ -483,6 +485,36 @@
   </div>
 </div>
 
+<!-- Modal Importar lista -->
+<div class="overlay" id="overlayImportar" style="z-index:60;">
+  <div class="modal" style="max-width:860px;">
+    <button class="close-x" data-close="overlayImportar">&times;</button>
+    <h3>Importar lista de piezas</h3>
+    <p style="font-size:13px;color:var(--ink-soft);margin:0 0 10px;">Sube el Excel/CSV que te regresó el cliente, o pega aquí la tabla copiada desde Word o Excel. Columnas: Alumno, Talla, Número, Nombre en uniforme, Tipo de prenda, Observaciones. Si la lista no trae tipo, elige uno abajo.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+      <input type="file" id="impArchivo" accept=".xlsx,.xls,.csv,.txt">
+      <button type="button" class="btn secondary" id="btnPlantillaExcel">Descargar plantilla Excel</button>
+    </div>
+    <div class="field"><label>…o pega la tabla aquí</label><textarea id="impPegar" rows="4" placeholder="Talla [tab] Nombre [tab] Número [tab] Tipo de prenda [tab] Observaciones"></textarea></div>
+    <div class="field"><label>Tipo de prenda para las filas que no lo traigan</label><select id="impTipoDef"></select></div>
+    <button type="button" class="btn secondary" id="btnImpAnalizar">Revisar lista</button>
+    <div id="impResumen" style="margin:12px 0 6px;font-size:14px;"></div>
+    <div style="max-height:340px;overflow:auto;">
+      <table class="mini-table" id="impTabla" style="display:none;">
+        <thead><tr><th>#</th><th>Alumno</th><th>Talla</th><th>En uniforme</th><th>Núm.</th><th>Tipo</th><th>Observaciones</th><th>Estado</th></tr></thead>
+        <tbody id="impBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <div></div>
+      <div class="right">
+        <button type="button" class="btn secondary" data-close="overlayImportar">Cancelar</button>
+        <button type="button" class="btn" id="btnImpConfirmar" disabled>Cargar al pedido</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Modal Insumo -->
 <div class="overlay" id="overlayAjustesNegocio">
   <div class="modal">
@@ -518,15 +550,15 @@
 
 <div class="overlay" id="overlayPreviewCotizacion">
   <div class="modal" style="max-width:900px;padding:0;">
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;background:var(--surface-2);">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:12px 16px;background:var(--surface-2);">
       <strong>Vista previa</strong>
-      <div style="display:flex;gap:10px;">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn" id="btnDescargarDesdePreview">⭳ Descargar PDF</button>
         <button class="btn secondary" data-close="overlayPreviewCotizacion">Cerrar</button>
       </div>
     </div>
     <div style="max-height:75vh;overflow:auto;background:#666;padding:20px;">
-      <div id="previewCotizacionBody" style="max-width:820px;margin:0 auto;box-shadow:0 4px 18px rgba(0,0,0,.4);"></div>
+      <div id="previewCotizacionBody" style="margin:0 auto;box-shadow:0 4px 18px rgba(0,0,0,.4);"></div>
     </div>
   </div>
 </div>
@@ -881,7 +913,11 @@ async function loadData(){
       {id:'p1', nombre:'Playera', precio:0},
       {id:'p2', nombre:'Short', precio:0},
       {id:'p3', nombre:'Uniforme completo', precio:0},
+      {id:'p4', nombre:'Uniforme portero', precio:0},
     ];
+    await saveCatalogo(true);
+  } else if(!catalogoPrendas.some(c => /portero/i.test(c.nombre||''))){
+    catalogoPrendas.push({id:'p'+Date.now(), nombre:'Uniforme portero', precio:0});
     await saveCatalogo(true);
   }
   document.getElementById('filterMes').value = todayStr().slice(0,7);
@@ -997,15 +1033,21 @@ function renderDashboard(){
 }
 
 /* ---------- Kanban ---------- */
+// Terminado = entregado y sin saldo pendiente. Solo se oculta del tablero; sigue contando en Panel, Costos y Excel.
+const esTerminado = p => p.estatusProduccion === 'entregado' && pagoEstatus(p) === 'pagado';
 function renderKanban(){
   const tipoFilter = document.getElementById('filterTipo').value;
   const search = document.getElementById('searchPedido').value.trim().toLowerCase();
+  const mostrarTerminados = document.getElementById('chkTerminados').checked;
+  const ocultos = pedidos.filter(esTerminado).length;
+  document.getElementById('lblTerminadosOcultos').textContent = (!mostrarTerminados && !search && ocultos) ? `(${ocultos} ocultos)` : '';
   const kanban = document.getElementById('kanban');
   kanban.innerHTML = '';
   ESTATUS_ORDER.forEach(estKey => {
     const col = document.createElement('div');
     col.className = 'col';
     const items = pedidos.filter(p => p.estatusProduccion === estKey)
+      .filter(p => mostrarTerminados || search || !esTerminado(p))
       .filter(p => !tipoFilter || p.tipo === tipoFilter)
       .filter(p => !search || (p.cliente||'').toLowerCase().includes(search));
     col.innerHTML = `<h3>${ESTATUS_LABELS[estKey]} <span class="mono">${items.length}</span></h3>`;
@@ -1716,8 +1758,10 @@ document.getElementById('btnGuardarAjustesNegocio').addEventListener('click', as
 });
 
 // Convierte un logo a color negro (silueta), conservando la transparencia — usado para el PDF.
+const _cacheLogoNegro = {};
 function logoANegro(srcDataUrl){
-  return new Promise((resolve) => {
+  if(srcDataUrl && _cacheLogoNegro[srcDataUrl]) return _cacheLogoNegro[srcDataUrl];
+  const p = new Promise((resolve) => {
     if(!srcDataUrl){ resolve(''); return; }
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -1737,6 +1781,8 @@ function logoANegro(srcDataUrl){
     img.onerror = () => resolve(srcDataUrl);
     img.src = srcDataUrl;
   });
+  if(srcDataUrl) _cacheLogoNegro[srcDataUrl] = p;
+  return p;
 }
 
 async function construirHtmlCotizacion(c){
@@ -1805,25 +1851,102 @@ async function construirHtmlCotizacion(c){
   `;
 }
 
+/* ---------- Generación de PDF robusta (celular) ---------- */
+const PDF_ANCHO = 816; // ancho fijo de hoja carta a 96 dpi
+let generandoPdf = false;
+function avisoPdf(msg){
+  let el = document.getElementById('avisoPdf');
+  if(!el){
+    el = document.createElement('div'); el.id = 'avisoPdf';
+    el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#20241f;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999;font-size:14px;box-shadow:0 4px 14px rgba(0,0,0,.4);display:none;';
+    document.body.appendChild(el);
+  }
+  if(msg){ el.textContent = msg; el.style.display = 'block'; } else el.style.display = 'none';
+}
+function esperarImagenes(root){
+  const imgs = Array.from(root.querySelectorAll('img'));
+  return Promise.all(imgs.map(img => (img.complete && img.naturalWidth) ? Promise.resolve() :
+    new Promise(res => { img.onload = img.onerror = () => res(); setTimeout(res, 4000); })));
+}
+function canvasEnBlanco(canvas){
+  if(!canvas || !canvas.width || !canvas.height) return true;
+  try{
+    const t = document.createElement('canvas'); t.width = 48; t.height = 64;
+    const ctx = t.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0,0,48,64);
+    ctx.drawImage(canvas, 0, 0, 48, 64);
+    const d = ctx.getImageData(0,0,48,64).data;
+    for(let i=0;i<d.length;i+=4){ if(d[i]<250 || d[i+1]<250 || d[i+2]<250) return false; }
+    return true;
+  }catch(e){ return false; } // si no se puede revisar, se asume bien
+}
 async function generarPdfCotizacion(c){
-  const html = await construirHtmlCotizacion(c);
-  const contenedor = document.createElement('div');
-  contenedor.innerHTML = html;
-  document.body.appendChild(contenedor);
-  html2pdf().set({
-    margin: 0,
-    filename: `Cotizacion_${(c.producto||'taller').replace(/\s+/g,'_')}_${c.cliente.replace(/\s+/g,'_')}.pdf`,
-    html2canvas: { scale: 2 },
-    jsPDF: { unit: 'pt', format: 'letter', orientation: 'portrait' },
-  }).from(contenedor).save().then(() => contenedor.remove());
+  if(generandoPdf) return;
+  generandoPdf = true;
+  const btnPrev = document.getElementById('btnDescargarDesdePreview');
+  const txtPrev = btnPrev.textContent;
+  btnPrev.disabled = true; btnPrev.textContent = 'Generando…';
+  avisoPdf('Generando PDF…');
+  const escondite = document.createElement('div'); // se esconde fuera de pantalla
+  escondite.style.cssText = 'position:fixed;left:-10000px;top:0;z-index:-1;';
+  const contenedor = document.createElement('div'); // este es el que se fotografía (sin posición propia)
+  contenedor.style.cssText = `width:${PDF_ANCHO}px;background:#fff;`;
+  escondite.appendChild(contenedor);
+  try{
+    contenedor.innerHTML = await construirHtmlCotizacion(c);
+    document.body.appendChild(escondite);
+    await esperarImagenes(contenedor);
+    await new Promise(r => setTimeout(r, 150));
+    const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 820;
+    const escalas = esMovil ? [1.5, 1.1, 0.8] : [2, 1.5, 1];
+    const filename = `Cotizacion_${(c.producto||'taller').replace(/\s+/g,'_')}_${c.cliente.replace(/\s+/g,'_')}.pdf`;
+    let listo = false;
+    for(const scale of escalas){
+      const worker = html2pdf().set({
+        margin: 0, filename,
+        html2canvas: { scale, useCORS:true, backgroundColor:'#fff', scrollX:0, scrollY:0, windowWidth:PDF_ANCHO, logging:false },
+        jsPDF: { unit:'pt', format:'letter', orientation:'portrait' },
+      }).from(contenedor);
+      let canvas = null;
+      try{ canvas = await worker.toCanvas().get('canvas'); }catch(e){ console.warn('PDF: error al renderizar a escala '+scale, e); }
+      if(canvas && !canvasEnBlanco(canvas)){
+        await worker.toPdf().save();
+        listo = true; break;
+      }
+      console.warn('PDF en blanco a escala '+scale+', reintentando con menor resolución');
+      avisoPdf('Reintentando con menor resolución…');
+      await new Promise(r => setTimeout(r, 400));
+    }
+    if(!listo) alert('No se pudo generar el PDF en este dispositivo. Intenta de nuevo, o genéralo desde una computadora.');
+  }catch(e){
+    console.error(e); alert('Error al generar el PDF: '+e.message);
+  }finally{
+    escondite.remove(); avisoPdf('');
+    btnPrev.disabled = false; btnPrev.textContent = txtPrev;
+    generandoPdf = false;
+  }
 }
 
 let cotizacionEnPreview = null;
+function ajustarEscalaPreview(){
+  const cont = document.getElementById('previewCotizacionBody');
+  const hoja = cont.firstElementChild;
+  if(!hoja) return;
+  const disponible = cont.parentElement.clientWidth - 40;
+  const k = Math.min(1, disponible / PDF_ANCHO);
+  hoja.style.transform = `scale(${k})`;
+  cont.style.width = (PDF_ANCHO * k) + 'px';
+  cont.style.height = (hoja.offsetHeight * k) + 'px';
+}
+window.addEventListener('resize', () => { if(document.getElementById('overlayPreviewCotizacion').classList.contains('open')) ajustarEscalaPreview(); });
 async function previsualizarCotizacion(c){
   cotizacionEnPreview = c;
   const html = await construirHtmlCotizacion(c);
-  document.getElementById('previewCotizacionBody').innerHTML = html;
+  const cont = document.getElementById('previewCotizacionBody');
+  cont.innerHTML = `<div style="width:${PDF_ANCHO}px;transform-origin:top left;background:#fff;">${html}</div>`;
   document.getElementById('overlayPreviewCotizacion').classList.add('open');
+  await esperarImagenes(cont);
+  ajustarEscalaPreview();
 }
 document.getElementById('btnDescargarDesdePreview').addEventListener('click', () => {
   if(cotizacionEnPreview) generarPdfCotizacion(cotizacionEnPreview);
@@ -1957,10 +2080,12 @@ function piezaRowEl(data){
   const tr = document.createElement('tr');
   tr.dataset.rid = rid;
   tr.innerHTML = `
+    <td><input type="text" class="pAlumno" value="${escapeHtml(data.alumno||'')}"></td>
     <td><input type="text" class="pTalla" value="${escapeHtml(data.talla||'')}"></td>
     <td><input type="text" class="pNombre" value="${escapeHtml(data.nombre||'')}"></td>
     <td><input type="text" class="pNumero" value="${escapeHtml(data.numero||'')}"></td>
     <td><select class="pTipo">${tipoPrendaOptions(data.tipoPrendaId)}</select></td>
+    <td><input type="text" class="pObs" value="${escapeHtml(data.observaciones||'')}"></td>
     <td><button type="button" class="rm">&times;</button></td>
   `;
   tr.querySelector('.rm').addEventListener('click', () => { tr.remove(); recalcTotal(); });
@@ -1993,6 +2118,136 @@ document.getElementById('btnConfirmarMasivo').addEventListener('click', () => {
   }
   recalcTotal();
   document.getElementById('panelMasivo').style.display = 'none';
+});
+
+
+/* ---------- Importar lista de piezas (Excel / CSV / pegado) ---------- */
+let impFilas = []; let impUltimaMatriz = null;
+const impNorm = t => String(t==null?'':t).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+function impMapaColumnas(headers){
+  const m = {};
+  headers.forEach((h,i) => {
+    const n = impNorm(h);
+    if(m.alumno===undefined && (n.startsWith('alumno')||n.startsWith('datos'))) m.alumno=i;
+    else if(m.talla===undefined && n.startsWith('talla')) m.talla=i;
+    else if(m.nombre===undefined && n.startsWith('nombre')) m.nombre=i;
+    else if(m.numero===undefined && n.startsWith('numero')) m.numero=i;
+    else if(m.tipo===undefined && (n.startsWith('tipo')||n.startsWith('prenda'))) m.tipo=i;
+    else if(m.obs===undefined && n.startsWith('observ')) m.obs=i;
+  });
+  return m;
+}
+function impMatrizDeTexto(txt){
+  return txt.replace(/\r/g,'').split('\n').filter(l=>l.trim()).map(l => {
+    if(l.includes('\t')) return l.split('\t');
+    if(l.includes(';')) return l.split(';');
+    return l.split(',').map(v=>v.replace(/^"|"$/g,''));
+  });
+}
+function impAnalizar(matriz){
+  impFilas = [];
+  if(!matriz.length){ impRender(); return; }
+  let hi = matriz.findIndex(r => Object.keys(impMapaColumnas(r)).length >= 3);
+  let map, datos;
+  if(hi>=0){ map = impMapaColumnas(matriz[hi]); datos = matriz.slice(hi+1); }
+  else { map = {talla:0,nombre:1,numero:2,tipo:3,obs:4}; datos = matriz; }
+  impUltimaMatriz = matriz;
+  if(hi>=0 && map.nombre===undefined){ const j = matriz[hi].findIndex((h,i) => !String(h).trim() && i>0); if(j>0) map.nombre = j; }
+  const esEnc = r => impNorm(r[map.talla])==='talla';
+  const get = (r,k) => map[k]===undefined ? '' : String(r[map[k]]==null?'':r[map[k]]).trim();
+  datos.forEach(r => {
+    if(esEnc(r)) return;
+    const f = {alumno:get(r,'alumno'), talla:get(r,'talla'), nombre:get(r,'nombre'), numero:get(r,'numero'), tipoTxt:get(r,'tipo'), observaciones:get(r,'obs')};
+    if(!f.alumno && !f.talla && !f.nombre && !f.numero && !f.tipoTxt && !f.observaciones) return;
+    if(/^(ejemplo|instrucc)/i.test(f.nombre)) return;
+    const mt = f.talla.match(/^([A-Za-z]+)\s*\(\s*(\d+)\s*\)$/);
+    if(mt){ f.talla = mt[1].toUpperCase(); f.observaciones = (f.observaciones ? f.observaciones+' · ' : '') + 'Talla '+mt[2]; }
+    const def = document.getElementById('impTipoDef').value;
+    if(!f.tipoTxt && def){ const dc = catalogoPrendas.find(c => String(c.id)===String(def)); if(dc) f.tipoTxt = dc.nombre; }
+    const n = impNorm(f.tipoTxt);
+    const cat = n ? catalogoPrendas.find(c => impNorm(c.nombre)===n) : null;
+    f.tipoPrendaId = cat ? cat.id : '';
+    f.alertas = [];
+    if(!f.talla) f.alertas.push('Falta talla');
+    else if(!f.numero) f.alertas.push('Sin número');
+    if(!f.tipoTxt) f.alertas.push('Falta tipo de prenda');
+    else if(!cat) f.alertas.push('Tipo no existe en catálogo');
+    impFilas.push(f);
+  });
+  // números repetidos dentro de la misma lista y tipo
+  const vistos = {};
+  impFilas.forEach(f => { if(f.numero){ const k=f.numero+'|'+impNorm(f.tipoTxt); (vistos[k]=vistos[k]||[]).push(f); } });
+  Object.values(vistos).forEach(a => { if(a.length>1) a.forEach(f => f.alertas.push('Número repetido')); });
+  impRender();
+}
+function impRender(){
+  const body = document.getElementById('impBody');
+  const tabla = document.getElementById('impTabla');
+  body.innerHTML = '';
+  const conError = impFilas.filter(f => f.alertas.some(a => a!=='Número repetido' && a!=='Sin número')).length;
+  const conAviso = impFilas.filter(f => f.alertas.length).length - conError;
+  document.getElementById('impResumen').innerHTML = impFilas.length
+    ? `<b>${impFilas.length}</b> piezas leídas · <span style="color:#2f6b3a;">${impFilas.length-conError} listas</span>` + (conError?` · <span style="color:#b3261e;">${conError} con error (se cargan para que las corrijas)</span>`:'') + (conAviso>0?` · <span style="color:#a06a00;">${conAviso} con aviso</span>`:'')
+    : 'No se encontraron filas. Revisa que la lista tenga encabezados o datos.';
+  tabla.style.display = impFilas.length ? '' : 'none';
+  impFilas.forEach((f,i) => {
+    const grave = f.alertas.some(a => a!=='Número repetido' && a!=='Sin número');
+    const tr = document.createElement('tr');
+    if(f.alertas.length) tr.style.background = grave ? 'rgba(179,38,30,.12)' : 'rgba(224,160,0,.15)';
+    tr.innerHTML = `<td>${i+1}</td><td>${escapeHtml(f.alumno)}</td><td>${escapeHtml(f.talla)}</td><td>${escapeHtml(f.nombre)}</td><td>${escapeHtml(f.numero)}</td><td>${escapeHtml(f.tipoTxt)}</td><td>${escapeHtml(f.observaciones)}</td><td>${f.alertas.length?escapeHtml(f.alertas.join(', ')):'✔'}</td>`;
+    body.appendChild(tr);
+  });
+  document.getElementById('btnImpConfirmar').disabled = !impFilas.length;
+}
+document.getElementById('btnImportarLista').addEventListener('click', () => {
+  document.getElementById('impArchivo').value = '';
+  document.getElementById('impPegar').value = '';
+  impFilas = []; impUltimaMatriz = null; impRender();
+  document.getElementById('impTipoDef').innerHTML = '<option value="">(la lista ya trae el tipo)</option>' + tipoPrendaOptions();
+  document.getElementById('overlayImportar').classList.add('open');
+});
+document.getElementById('impTipoDef').addEventListener('change', () => { if(impUltimaMatriz) impAnalizar(impUltimaMatriz); });
+document.getElementById('btnImpAnalizar').addEventListener('click', () => {
+  impAnalizar(impMatrizDeTexto(document.getElementById('impPegar').value));
+});
+document.getElementById('impArchivo').addEventListener('change', e => {
+  const file = e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try{
+      const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+      const hoja = wb.Sheets[wb.SheetNames[0]];
+      impAnalizar(XLSX.utils.sheet_to_json(hoja, {header:1, raw:false, defval:''}));
+    }catch(err){ alert('No se pudo leer el archivo: '+err.message); }
+  };
+  reader.readAsArrayBuffer(file);
+});
+document.getElementById('btnImpConfirmar').addEventListener('click', () => {
+  const body = document.getElementById('piezasBody');
+  // quita filas vacías que haya antes de cargar
+  body.querySelectorAll('tr').forEach(tr => {
+    if(!tr.querySelector('.pTalla').value.trim() && !tr.querySelector('.pNombre').value.trim() && !tr.querySelector('.pNumero').value.trim()) tr.remove();
+  });
+  impFilas.forEach(f => {
+    const obs = f.observaciones || ((!f.tipoPrendaId && f.tipoTxt) ? 'Tipo pedido: '+f.tipoTxt : '');
+    body.appendChild(piezaRowEl({alumno:f.alumno, talla:f.talla, nombre:f.nombre, numero:f.numero, tipoPrendaId:f.tipoPrendaId, observaciones:obs}));
+  });
+  recalcTotal();
+  document.getElementById('overlayImportar').classList.remove('open');
+});
+document.getElementById('btnPlantillaExcel').addEventListener('click', () => {
+  const tipos = catalogoPrendas.map(c => c.nombre);
+  const aoa = [['Alumno (datos completos)','Talla','Número','Nombre en uniforme','Tipo de prenda','Observaciones'],
+    ['PÉREZ LÓPEZ JUAN','M','10','JUAN', tipos[0]||'Playera',''],
+    ['LÓPEZ RUIZ PEDRO','8','7','PEDRITO', tipos[0]||'Playera','Niño']];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:32},{wch:8},{wch:10},{wch:22},{wch:24},{wch:28}];
+  const ws2 = XLSX.utils.aoa_to_sheet([['Tipos de prenda permitidos'], ...tipos.map(t=>[t])]);
+  ws2['!cols'] = [{wch:30}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Lista');
+  XLSX.utils.book_append_sheet(wb, ws2, 'Tipos de prenda');
+  XLSX.writeFile(wb, 'Plantilla_lista_pedido.xlsx');
 });
 
 /* ---------- Materiales rows ---------- */
@@ -2174,10 +2429,12 @@ document.getElementById('btnGuardarPedido').addEventListener('click', async () =
   const piezas = [];
   document.querySelectorAll('#piezasBody tr').forEach(tr => {
     piezas.push({
+      alumno: tr.querySelector('.pAlumno').value.trim(),
       talla: tr.querySelector('.pTalla').value.trim(),
       nombre: tr.querySelector('.pNombre').value.trim(),
       numero: tr.querySelector('.pNumero').value.trim(),
       tipoPrendaId: tr.querySelector('.pTipo').value,
+      observaciones: tr.querySelector('.pObs').value.trim(),
     });
   });
   const materiales = [];
@@ -2284,6 +2541,11 @@ document.getElementById('btnDeletePedido').addEventListener('click', async () =>
 });
 
 /* ---------- Filtros pedidos ---------- */
+try{ document.getElementById('chkTerminados').checked = localStorage.getItem('mostrarTerminados') === '1'; }catch(e){}
+document.getElementById('chkTerminados').addEventListener('change', e => {
+  try{ localStorage.setItem('mostrarTerminados', e.target.checked ? '1' : '0'); }catch(err){}
+  renderKanban();
+});
 document.getElementById('filterTipo').addEventListener('change', renderKanban);
 document.getElementById('searchPedido').addEventListener('input', renderKanban);
 
