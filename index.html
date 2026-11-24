@@ -516,7 +516,7 @@
 
     <h4>Resumen de piezas</h4>
     <div id="resumenPiezas" style="overflow-x:auto;"></div>
-    <div style="margin-top:8px;"><button type="button" class="add-row-btn" id="btnHojaPedido">📄 Hoja del pedido (PDF)</button></div>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;"><button type="button" class="add-row-btn" id="btnHojaPedido" style="width:auto;">📄 Hoja del pedido (PDF)</button><button type="button" class="add-row-btn" id="btnCorteVinil" style="width:auto;">✂ Corte de vinil</button><label class="small" style="display:flex;align-items:center;gap:5px;"><input type="checkbox" id="chkVinilEnHoja"> Incluir corte de vinil en la hoja</label></div>
 
     <h4>Material requerido</h4>
     <table class="mini-table">
@@ -680,6 +680,21 @@
     <div style="max-height:75vh;overflow:auto;background:#666;padding:20px;">
       <div id="previewCotizacionBody" style="margin:0 auto;box-shadow:0 4px 18px rgba(0,0,0,.4);"></div>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlayVinil">
+  <div class="modal" style="max-width:820px;">
+    <button class="close-x" data-close="overlayVinil">&times;</button>
+    <h3>✂ Corte de vinil</h3>
+    <div class="rc-checks" style="margin-bottom:8px;">
+      <label><input type="checkbox" data-vitam="grande"> Grande (espalda)</label>
+      <label><input type="checkbox" data-vitam="chico"> Chico (short)</label>
+      <label><input type="checkbox" data-vitam="mediano"> Mediano (frente)</label>
+      <label>Merma por dígito: <input type="number" id="vinilMerma" min="0" step="1" value="0" style="width:60px !important;padding:4px;"></label>
+    </div>
+    <div id="vinilBody" style="overflow-x:auto;"></div>
+    <div class="modal-actions"><div></div><div class="right"><button class="btn secondary" data-close="overlayVinil">Cerrar</button></div></div>
   </div>
 </div>
 
@@ -2678,6 +2693,118 @@ function renderResumenPiezas(){
 document.getElementById('piezasBody').addEventListener('input', e => {
   if(e.target.classList.contains('pTalla')) renderResumenPiezas();
 });
+/* ---------- Corte de vinil: nombres y dígitos ---------- */
+const vinilTam = { grande:true, chico:true, mediano:false };
+let vinilMerma = 0;
+const VINIL_COLS = ['0','1','2','3','4','5','6y9','7','8'];
+const VINIL_TAM_LABEL = { grande:'Número GRANDE (espalda)', chico:'Número CHICO (short)', mediano:'Número MEDIANO (frente)' };
+function vinilEsPortero(p){
+  const c = catalogoPrendas.find(x => String(x.id)===String(p.tipoPrendaId));
+  return !!c && /portero/i.test((c.nombre||'').normalize('NFD').replace(/[̀-ͯ]/g,''));
+}
+// Qué lleva cada pieza según su tipo de prenda: {playera, short, conocido}
+function vinilQueLleva(p){
+  const c = catalogoPrendas.find(x => String(x.id)===String(p.tipoPrendaId));
+  const n = ((c&&c.nombre)||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const tieneShort = /short/.test(n), tienePlayera = /playera|camisa|jersey|camiseta/.test(n);
+  if(tieneShort && !tienePlayera && !/completo|uniforme/.test(n)) return {playera:false, short:true, conocido:true};
+  if(tienePlayera && !tieneShort && !/completo/.test(n)) return {playera:true, short:false, conocido:true};
+  if(tieneShort && tienePlayera) return {playera:true, short:true, conocido:true};
+  return {playera:true, short:true, conocido:/completo|uniforme/.test(n)};
+}
+// piezas: [{nombre,numero,talla,tipoPrendaId}] -> {jugador,portero,alertas}
+function calcVinil(piezas){
+  const mkd = () => ({0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0});
+  const mk = () => ({ piezas:0, nombres:[], digitos:{ grande:mkd(), chico:mkd(), mediano:mkd() } });
+  const g = { jugador: mk(), portero: mk() }, alertas = [];
+  piezas.forEach((p,i) => {
+    const nombre = String(p.nombre||'').trim().replace(/\s+/g,' ').toUpperCase();
+    const numero = String(p.numero||'').trim();
+    const dig = numero.match(/\d/g) || [];
+    const grupo = vinilEsPortero(p) ? g.portero : g.jugador;
+    const q = vinilQueLleva(p);
+    grupo.piezas++;
+    if(q.playera && nombre) grupo.nombres.push(nombre);
+    dig.forEach(d => {
+      if(q.playera){ grupo.digitos.grande[d]++; grupo.digitos.mediano[d]++; }
+      if(q.short) grupo.digitos.chico[d]++;
+    });
+    const falta = [(q.playera && !nombre) && 'nombre', !dig.length && 'número'].filter(Boolean);
+    const aviso = [];
+    if(falta.length) aviso.push('falta '+falta.join(' y '));
+    if(!q.conocido) aviso.push('tipo de prenda no reconocido (se contó como uniforme completo)');
+    if(aviso.length) alertas.push({ n:i+1, talla:String(p.talla||'').trim(), falta:aviso.join('; ') });
+  });
+  return { jugador:g.jugador, portero:g.portero, alertas };
+}
+function vinilConteo(g, tam, merma){
+  const d = g.digitos[tam], fila = {};
+  VINIL_COLS.forEach(c => {
+    const base = c==='6y9' ? d[6]+d[9] : d[c];
+    fila[c] = base>0 ? base + (Number(merma)||0) : 0;
+  });
+  return fila;
+}
+function vinilBloqueHtml(titulo, g, key){
+  if(!g.piezas) return '';
+  const th = 'border:1px solid #999;padding:4px 8px;background:#e8e2cf;font-size:12px;text-align:center;';
+  const td = 'border:1px solid #999;padding:4px 8px;font-size:13px;text-align:center;';
+  const tams = Object.keys(vinilTam).filter(k => vinilTam[k]);
+  const corto = { grande:'GRANDE', chico:'CHICO', mediano:'MEDIANO' };
+  const sub = { grande:'espalda', chico:'short', mediano:'frente' };
+  const cab = tams.map(t => `<th style="${th}">${corto[t]}<br><span style="font-weight:400;">${sub[t]}</span><div class="vi-nocopy" style="margin-top:3px;"><button type="button" class="btn secondary small" data-vicopy="d|${key}|${t}">Copiar</button></div></th>`).join('');
+  const f = {}; tams.forEach(t => f[t] = vinilConteo(g, t, vinilMerma));
+  const filas = VINIL_COLS.map(c => `<tr><td style="${td}font-weight:700;">${c}</td>${tams.map(t=>`<td style="${td}${f[t][c]?'':'color:#999;'}">${f[t][c]||'–'}</td>`).join('')}</tr>`).join('');
+  const tabla = tams.length ? `<table style="border-collapse:collapse;margin-top:8px;min-width:60%;"><tr><th style="${th}">Dígito</th>${cab}</tr>${filas}</table>` : '<div class="small" style="margin-top:8px;">Marca al menos un tamaño de número.</div>';
+  return `<div style="margin:14px 0 6px;"><b style="font-size:15px;">${titulo}</b> <span class="small">(${g.piezas} pieza${g.piezas===1?'':'s'})</span></div>
+    <div style="font-size:12px;color:#555;">Nombres:</div>
+    <div style="border:1px solid #999;background:#fafafa;padding:8px;font-family:'IBM Plex Mono',monospace;font-size:14px;word-break:break-all;">${g.nombres.length ? escapeHtml(g.nombres.join('')) : '<span style="color:#999;">(sin nombres)</span>'}</div>
+    ${g.nombres.length ? `<div class="vi-nocopy" style="margin-top:4px;"><button type="button" class="btn small" data-vicopy="n|${key}">Copiar nombres</button></div>` : ''}
+    ${tabla}`;
+}
+function vinilAlertaHtml(c){
+  if(!c.alertas.length) return '';
+  return `<div style="background:#fdecea;border:1px solid #b3261e;color:#7a1710;padding:8px 10px;margin:10px 0;font-size:13px;"><b>⚠ Revisa estas piezas:</b><br>${c.alertas.map(a=>`Pieza ${a.n}${a.talla?' (talla '+escapeHtml(a.talla)+')':''}: falta ${a.falta}`).join('<br>')}</div>`;
+}
+function vinilContenidoHtml(c){
+  const hay = c.jugador.piezas + c.portero.piezas;
+  if(!hay) return '<div class="small">Aún no hay piezas en el pedido.</div>';
+  return vinilAlertaHtml(c) + vinilBloqueHtml('JUGADOR', c.jugador, 'jugador') + vinilBloqueHtml('PORTERO', c.portero, 'portero');
+}
+function vinilTextoCopiar(c, clave){
+  const p = clave.split('|');
+  const g = c[p[1]];
+  if(p[0]==='n') return g.nombres.join('');
+  const f = vinilConteo(g, p[2], vinilMerma);
+  return VINIL_COLS.map(k => `${k}\t${f[k]||0}`).join('\n');
+}
+function vinilCopiar(texto){
+  if(navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(texto).catch(()=>vinilCopiarViejo(texto));
+  vinilCopiarViejo(texto); return Promise.resolve();
+}
+function vinilCopiarViejo(texto){
+  const t = document.createElement('textarea'); t.value = texto; t.style.cssText='position:fixed;left:-9999px;'; document.body.appendChild(t); t.select();
+  try{ document.execCommand('copy'); }catch(e){} t.remove();
+}
+function renderVinil(){
+  const c = calcVinil(leerPiezasDelModal());
+  const cont = document.getElementById('vinilBody');
+  cont.innerHTML = vinilContenidoHtml(c);
+  cont.querySelectorAll('[data-vicopy]').forEach(b => b.addEventListener('click', async () => {
+    await vinilCopiar(vinilTextoCopiar(c, b.dataset.vicopy));
+    const t = b.textContent; b.textContent = 'Copiado ✓'; setTimeout(()=>{ b.textContent = t; }, 1400);
+  }));
+}
+document.getElementById('btnCorteVinil').addEventListener('click', () => {
+  if(!document.querySelectorAll('#piezasBody tr').length){ alert('Aún no hay piezas en el pedido.'); return; }
+  document.querySelectorAll('[data-vitam]').forEach(ch => ch.checked = vinilTam[ch.dataset.vitam]);
+  document.getElementById('vinilMerma').value = vinilMerma;
+  renderVinil();
+  document.getElementById('overlayVinil').classList.add('open');
+});
+document.querySelectorAll('[data-vitam]').forEach(ch => ch.addEventListener('change', () => { vinilTam[ch.dataset.vitam] = ch.checked; renderVinil(); }));
+document.getElementById('vinilMerma').addEventListener('input', e => { vinilMerma = Math.max(0, parseInt(e.target.value)||0); renderVinil(); });
+
 function construirHtmlHojaPedido(){
   const piezas = leerPiezasDelModal();
   const r = calcResumenPiezas(piezas);
@@ -2697,6 +2824,7 @@ function construirHtmlHojaPedido(){
     ${dato('Cliente', v('fCliente'))}${dato('Equipo', v('fEquipo'))}${dato('Producto', v('fProducto'))}${dato('Entrega de material', v('fFechaEntregaMaterial'))}${dato('Fecha de entrega', v('fFechaEntrega'))}${dato('Estatus', escapeHtml(estatusTxt))}
     <div style="font-size:14px;font-weight:700;margin:18px 0 6px;">Resumen de piezas</div>
     ${resumenPiezasHtml(r)}
+    ${document.getElementById('chkVinilEnHoja').checked ? `<div style="font-size:14px;font-weight:700;margin:20px 0 0;">Corte de vinil</div>${vinilContenidoHtml(calcVinil(piezas)).replace(/<div class="vi-nocopy".*?<\/div>/gs,'')}` : ''}
     <div style="font-size:14px;font-weight:700;margin:20px 0 6px;">Lista de piezas (${r.total})</div>
     <table style="border-collapse:collapse;width:100%;">
       <thead><tr>${['#',...(verAlumno?['Alumno']:[]),'Talla','En uniforme','Núm.','Tipo de prenda','Observaciones'].map(h=>`<th style="${celda}background:#e8e2cf;font-weight:700;">${h}</th>`).join('')}</tr></thead>
